@@ -105,6 +105,10 @@ export async function create(tableKey: string, data: Row, userId: string) {
       vals.push(`:${col.name.toLowerCase()}`);
       binds[col.name.toLowerCase()] = coerce(col, data[col.name]);
     }
+    if (hasCol(t, "RECSTATUS") && !cols.includes("RECSTATUS")) {
+      cols.push("RECSTATUS");
+      vals.push("'A'");
+    }
     const cb = auditCol(t, AUDIT.createdBy);
     const cd = auditCol(t, AUDIT.createdDate);
     if (cb) {
@@ -164,6 +168,7 @@ export type Field = {
   required: boolean;
   maxLength?: number;
   lookup?: string;
+  options?: { value: string; label: string }[];
 };
 
 const label = (n: string) =>
@@ -178,6 +183,7 @@ export function fieldsFor(tableKey: string): { pk: string; fields: Field[] } {
   const fields: Field[] = editable(t).map((c) => {
     let kind: Field["kind"] = "text";
     let lookup: string | undefined;
+    let options: Field["options"];
     if (c.type === "NUMBER" || c.type === "INTEGER") {
       kind = "number";
       if (c.name.endsWith("_ID")) {
@@ -190,11 +196,19 @@ export function fieldsFor(tableKey: string): { pk: string; fields: Field[] } {
       }
     } else if (c.type === "DATE") kind = "date";
     else if (c.type.includes("CLOB") || Number(c.size) > 500) kind = "textarea";
+    if (c.name === "RECSTATUS") {
+      kind = "select";
+      options = [{ value: "A", label: "Active" }, { value: "I", label: "Inactive" }];
+    } else if (/YN$/.test(c.name) && c.type.includes("CHAR")) {
+      kind = "select";
+      options = [{ value: "Y", label: "Yes" }, { value: "N", label: "No" }];
+    }
     return {
       name: c.name,
       label: label(c.name),
       kind,
       lookup,
+      options,
       required: !c.nullable && c.default === null,
       maxLength: c.size && /^\d+$/.test(c.size) && c.type.includes("CHAR") ? Number(c.size) : undefined,
     };

@@ -1,6 +1,7 @@
 "use client";
 
 import { Pencil, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ type Field = {
   required: boolean;
   maxLength?: number;
   lookup?: string;
+  options?: { value: string; label: string }[];
 };
 type Meta = { pk: string; fields: Field[]; lookups: Record<string, { value: number; label: string }[]> };
 type Row = Record<string, string | number | null>;
@@ -27,7 +29,9 @@ const selectClass =
 
 const toDateInput = (v: unknown) => (v ? String(v).slice(0, 10) : "");
 
-export function MasterManager({ table, title }: { table: string; title: string }) {
+export function MasterManager({
+  table, title, rowLink,
+}: { table: string; title: string; rowLink?: { label: string; href: string } }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -105,14 +109,22 @@ export function MasterManager({ table, title }: { table: string; title: string }
           <TableHeader>
             <TableRow>
               {columns.map((c) => <TableHead key={c}>{c}</TableHead>)}
-              <TableHead className="w-24" />
+              <TableHead className="w-32" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {meta && rows.map((r) => (
-              <TableRow key={String(r[meta.pk])}>
+            {meta && rows.map((r, i) => (
+              <TableRow key={`${String(r[meta.pk])}-${i}`}>
                 {columns.map((c) => <TableCell key={c}>{String(r[c] ?? "")}</TableCell>)}
-                <TableCell className="text-right">
+                <TableCell className="text-right whitespace-nowrap">
+                  {rowLink && (
+                    <Link
+                      href={rowLink.href.replace("{id}", String(r[meta.pk]))}
+                      className="mr-1 rounded-md border px-2 py-1 text-xs hover:bg-muted"
+                    >
+                      {rowLink.label}
+                    </Link>
+                  )}
                   <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(r)}><Pencil /></Button>
                   <Button size="icon-sm" variant="ghost" aria-label="Delete" onClick={() => remove(r)}><Trash2 /></Button>
                 </TableCell>
@@ -192,9 +204,9 @@ function RecordDialog({
                 {f.kind === "textarea" ? (
                   <Textarea id={id} name={f.name} defaultValue={String(value ?? "")} required={f.required} />
                 ) : f.kind === "select" ? (
-                  <select id={id} name={f.name} defaultValue={String(value ?? "")} required={f.required} className={selectClass}>
+                  <select id={id} name={f.name} defaultValue={String(value ?? (row ? "" : f.options?.[0]?.value ?? ""))} required={f.required} className={selectClass}>
                     <option value="">— Select —</option>
-                    {meta.lookups[f.lookup!]?.map((o) => (
+                    {(f.options ?? meta.lookups[f.lookup!])?.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>

@@ -4,7 +4,7 @@ import { errorResponse, guardTable, guardUser, json, missingRequired } from "@/l
 export async function GET(req: Request, ctx: RouteContext<"/api/master/[table]">) {
   const user = await guardUser();
   if (!user.ok) return user.res;
-  const table = guardTable((await ctx.params).table);
+  const table = guardTable((await ctx.params).table, user.value);
   if (!table.ok) return table.res;
 
   const sp = new URL(req.url).searchParams;
@@ -29,7 +29,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/master/[table]">
 export async function POST(req: Request, ctx: RouteContext<"/api/master/[table]">) {
   const user = await guardUser();
   if (!user.ok) return user.res;
-  const table = guardTable((await ctx.params).table);
+  const table = guardTable((await ctx.params).table, user.value);
   if (!table.ok) return table.res;
 
   const data = await req.json().catch(() => null);

@@ -11,10 +11,10 @@ const NAV = [
   { href: "/master", label: "Master Data", icon: Database },
   { href: "/people", label: "Personal Information", icon: Users },
   { href: "/investigations", label: "Investigations", icon: FileSearch },
-  { href: "/admin/users", label: "User Management", icon: ShieldCheck },
+  { href: "/admin", label: "User Management", icon: ShieldCheck, adminOnly: true },
 ];
 
-export function AppSidebar({ userName }: { userName: string }) {
+export function AppSidebar({ userName, isAdmin }: { userName: string; isAdmin: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -28,7 +28,7 @@ export function AppSidebar({ userName }: { userName: string }) {
     <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="border-b px-4 py-4 text-sm font-semibold">EIDMS Management</div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-        {NAV.map(({ href, label, icon: Icon }) => (
+        {NAV.filter((n) => isAdmin || !n.adminOnly).map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
             href={href}

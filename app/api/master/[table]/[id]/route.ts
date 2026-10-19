@@ -7,7 +7,7 @@ async function guard(ctx: Ctx) {
   const user = await guardUser();
   if (!user.ok) return { res: user.res };
   const { table, id } = await ctx.params;
-  const t = guardTable(table);
+  const t = guardTable(table, user.value);
   if (!t.ok) return { res: t.res };
   if (!/^\d+$/.test(id)) return { res: json({ error: "Invalid id" }, 400) };
   return { user: user.value, table: t.value, id };

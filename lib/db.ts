@@ -18,6 +18,25 @@ function getPool() {
   return globalForDb.oraclePool;
 }
 
+/** Startup health check: logs whether the Oracle DB is reachable. Never throws. */
+export async function logDbConnection() {
+  const target = `${process.env.ORACLE_USER}@${process.env.ORACLE_CONNECT_STRING}`;
+  const started = Date.now();
+  try {
+    const conn = await oracledb.getConnection({
+      user: process.env.ORACLE_USER,
+      password: process.env.ORACLE_PASSWORD,
+      connectString: process.env.ORACLE_CONNECT_STRING,
+    });
+    await conn.execute("SELECT 1 FROM DUAL");
+    await conn.close();
+    console.log(`[db] ✓ Oracle connected (${target}) in ${Date.now() - started}ms`);
+    if (dryRun()) console.warn("[db] ⚠ DB_DRY_RUN is ON: all writes are rolled back");
+  } catch (e) {
+    console.error(`[db] ✗ Oracle NOT connected (${target}): ${(e as Error).message}`);
+  }
+}
+
 export type Binds = oracledb.BindParameters;
 export type Row = Record<string, unknown>;
 
@@ -37,8 +56,17 @@ export async function query<T = Row>(sql: string, binds: Binds = {}): Promise<T[
   });
 }
 
+/** DB_DRY_RUN=true: every write runs for real (so errors and row counts are genuine) and is then rolled back. */
+const dryRun = () => /^(1|true|yes)$/i.test(process.env.DB_DRY_RUN ?? "");
+
 export async function execute(sql: string, binds: Binds = {}) {
-  return withConnection((c) => c.execute(sql, binds, { autoCommit: true }));
+  return withConnection(async (c) => {
+    if (!dryRun()) return c.execute(sql, binds, { autoCommit: true });
+    const res = await c.execute(sql, binds, { autoCommit: false });
+    await c.rollback();
+    console.log("[db] DRY RUN: write rolled back, nothing saved");
+    return res;
+  });
 }
 
 /** Runs fn inside one transaction; commits on success, rolls back on throw. */
@@ -46,7 +74,10 @@ export async function transaction<T>(fn: (c: oracledb.Connection) => Promise<T>)
   return withConnection(async (c) => {
     try {
       const out = await fn(c);
-      await c.commit();
+      if (dryRun()) {
+        await c.rollback();
+        console.log("[db] DRY RUN: transaction rolled back, nothing saved");
+      } else await c.commit();
       return out;
     } catch (e) {
       await c.rollback();
@@ -55,7 +86,10 @@ export async function transaction<T>(fn: (c: oracledb.Connection) => Promise<T>)
   });
 }
 
-/** Allocates the next primary key: configured sequence first, MAX(pk)+1 as fallback. */
+/**
+ * Allocates the next primary key: the configured sequence, but never lower than MAX(pk)+1 (legacy scripts insert
+ * with MAX+1, leaving the sequence behind). Falls back to MAX(pk)+1 when the sequence doesn't exist.
+ */
 export async function nextId(
   c: oracledb.Connection,
   owner: string,
@@ -65,14 +99,16 @@ export async function nextId(
   const pattern = process.env.ORACLE_SEQ_PATTERN ?? "{OWNER}.{TABLE}_SEQ";
   const seq = pattern.replace("{OWNER}", owner).replace("{TABLE}", table).replace("{PK}", pk);
   if (!/^[A-Za-z0-9_$.]+$/.test(seq)) throw new Error("Invalid ORACLE_SEQ_PATTERN");
+  const maxPlusOne = async () =>
+    Number(
+      (await c.execute<{ ID: number }>(`SELECT NVL(MAX(TO_NUMBER(${pk})), 0) + 1 AS ID FROM ${owner}.${table}`)).rows![0]
+        .ID,
+    );
   try {
     const r = await c.execute<{ ID: number }>(`SELECT ${seq}.NEXTVAL AS ID FROM DUAL`);
-    return Number(r.rows![0].ID);
+    return Math.max(Number(r.rows![0].ID), await maxPlusOne());
   } catch (e) {
     if (!String((e as Error).message).includes("ORA-02289")) throw e;
-    const r = await c.execute<{ ID: number }>(
-      `SELECT NVL(MAX(${pk}), 0) + 1 AS ID FROM ${owner}.${table}`,
-    );
-    return Number(r.rows![0].ID);
+    return maxPlusOne();
   }
 }
