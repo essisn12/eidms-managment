@@ -3,8 +3,8 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 
 const MODULES = [
   { href: "/master", title: "Master Data", desc: "Geography, people, education, organization and system lookups." },
-  { href: "/people", title: "Personal Information", desc: "Search and manage personal records and their sub-forms." },
-  { href: "/investigations", title: "Investigations", desc: "Investigation results and file tracking." },
+  { href: "/people", title: "Personal Information", desc: "Search and manage personal records and their sub-forms.", soon: true },
+  { href: "/investigations", title: "Investigations", desc: "Investigation results and file tracking.", soon: true },
   { href: "/admin/users", title: "User Management", desc: "Users, roles, password reset and expiry extension." },
 ];
 
@@ -13,16 +13,24 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {MODULES.map((m) => (
-          <Link key={m.href} href={m.href}>
-            <Card className="h-full transition-colors hover:bg-muted/50">
+        {MODULES.map((m) => {
+          const card = (
+            <Card className={m.soon ? "h-full opacity-60" : "h-full transition-colors hover:bg-muted/50"}>
               <CardHeader>
-                <CardTitle>{m.title}</CardTitle>
+                <CardTitle>
+                  {m.title}
+                  {m.soon && <span className="ml-2 text-xs font-normal uppercase text-muted-foreground">Coming soon</span>}
+                </CardTitle>
                 <CardDescription>{m.desc}</CardDescription>
               </CardHeader>
             </Card>
-          </Link>
-        ))}
+          );
+          return m.soon ? (
+            <div key={m.href} aria-disabled="true" className="cursor-not-allowed">{card}</div>
+          ) : (
+            <Link key={m.href} href={m.href}>{card}</Link>
+          );
+        })}
       </div>
     </div>
   );

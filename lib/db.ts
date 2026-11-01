@@ -57,7 +57,7 @@ export async function query<T = Row>(sql: string, binds: Binds = {}): Promise<T[
 }
 
 /** DB_DRY_RUN=true: every write runs for real (so errors and row counts are genuine) and is then rolled back. */
-const dryRun = () => /^(1|true|yes)$/i.test(process.env.DB_DRY_RUN ?? "");
+export const dryRun = () => /^(1|true|yes)$/i.test(process.env.DB_DRY_RUN ?? "");
 
 export async function execute(sql: string, binds: Binds = {}) {
   return withConnection(async (c) => {

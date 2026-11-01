@@ -9,10 +9,10 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/master", label: "Master Data", icon: Database },
-  { href: "/people", label: "Personal Information", icon: Users },
-  { href: "/investigations", label: "Investigations", icon: FileSearch },
+  { href: "/people", label: "Personal Information", icon: Users, soon: true },
+  { href: "/investigations", label: "Investigations", icon: FileSearch, soon: true },
   { href: "/admin", label: "User Management", icon: ShieldCheck, adminOnly: true },
-];
+] as { href: string; label: string; icon: typeof Users; adminOnly?: boolean; soon?: boolean }[];
 
 export function AppSidebar({ userName, isAdmin }: { userName: string; isAdmin: boolean }) {
   const pathname = usePathname();
@@ -28,7 +28,19 @@ export function AppSidebar({ userName, isAdmin }: { userName: string; isAdmin: b
     <aside className="flex w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="border-b px-4 py-4 text-sm font-semibold">EIDMS Management</div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-        {NAV.filter((n) => isAdmin || !n.adminOnly).map(({ href, label, icon: Icon }) => (
+        {NAV.filter((n) => isAdmin || !n.adminOnly).map(({ href, label, icon: Icon, soon }) =>
+          soon ? (
+            <span
+              key={href}
+              aria-disabled="true"
+              title="Coming soon"
+              className="flex cursor-not-allowed items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground opacity-60"
+            >
+              <Icon className="size-4" />
+              {label}
+              <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span>
+            </span>
+          ) : (
           <Link
             key={href}
             href={href}
@@ -40,7 +52,8 @@ export function AppSidebar({ userName, isAdmin }: { userName: string; isAdmin: b
             <Icon className="size-4" />
             {label}
           </Link>
-        ))}
+          ),
+        )}
         {pathname.startsWith("/master/") && (
           <ul className="ml-3 mt-1 space-y-0.5 border-l pl-2">
             {MASTER_TABLES.map((t) => (

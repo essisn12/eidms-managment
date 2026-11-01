@@ -8,6 +8,7 @@ const TABS = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/roles", label: "Roles & Permissions" },
   { href: "/admin/sessions", label: "Sessions" },
+  { href: "/admin/file-recovery", label: "File Recovery" },
   { href: "/admin/config", label: "Configuration" },
 ];
 

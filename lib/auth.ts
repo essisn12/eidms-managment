@@ -7,11 +7,35 @@ import { readSession, type SessionUser } from "./session";
 /** UMS_USERINFO.RECSTATUS value that means "active, may log in". */
 const ACTIVE = "A";
 
-type LoginRow = { USERID: string; NAME: string; STATUS: string; USERPASS: string; EXPIREDATE: Date };
+type LoginRow = {
+  USERID: string;
+  NAME: string;
+  STATUS: string;
+  USERPASS: string | null;
+  EXPIREDATE: Date | null;
+};
 
 export type LoginResult =
   | { ok: true; user: SessionUser; passwordExpired: boolean }
   | { ok: false; error: string };
+
+/**
+ * UMS_LOGINFAILURETEMP.USERID has a foreign key to UMS_USERINFO.USERID, so only known users can be
+ * recorded. Use the stored USERID because the FK comparison is case-sensitive. A user deleted
+ * between the lookup and this insert must not turn a failed login into a 500.
+ */
+async function recordFailure(userId: string, ip: string) {
+  try {
+    await execute(
+      `INSERT INTO UMS.UMS_LOGINFAILURETEMP (ID, USERID, IPADDRESS, LOGINDATETIME)
+       VALUES ((SELECT NVL(MAX(ID),0)+1 FROM UMS.UMS_LOGINFAILURETEMP), :u, :ip, SYSDATE)`,
+      { u: userId, ip: ip.slice(0, 39) },
+    );
+  } catch (e) {
+    if (!String((e as Error).message).includes("ORA-02291")) throw e;
+    console.warn(`[auth] failed-login row skipped for ${userId}: user no longer exists`);
+  }
+}
 
 export async function verifyLogin(userId: string, password: string, ip: string): Promise<LoginResult> {
   const maxFail = Number(process.env.LOGIN_MAX_FAILURES ?? 5);
@@ -24,23 +48,21 @@ export async function verifyLogin(userId: string, password: string, ip: string):
   );
   if (N >= maxFail) return { ok: false, error: `Too many failed attempts. Try again in ${lockMin} minutes.` };
 
+  // LEFT JOIN so a real user with no active password is still found (and can have the failure
+  // recorded); an unknown user produces no row at all.
   const rows = await query<LoginRow>(
     `SELECT u.USERID, u.NAME, u.RECSTATUS AS STATUS, p.USERPASS, p.EXPIREDATE
        FROM UMS.UMS_USERINFO u
-       JOIN UMS.UMS_PASS p ON p.USERID = u.USERID AND p.RECSTATUS = 'A'
+       LEFT JOIN UMS.UMS_PASS p ON p.USERID = u.USERID AND p.RECSTATUS = 'A'
       WHERE UPPER(u.USERID) = UPPER(:u)
-      ORDER BY p.CREATEDATE DESC FETCH FIRST 1 ROW ONLY`,
+      ORDER BY p.CREATEDATE DESC NULLS LAST FETCH FIRST 1 ROW ONLY`,
     { u: userId },
   );
   const row = rows[0];
-  const valid = row ? await bcrypt.compare(password, row.USERPASS) : false;
+  const valid = row?.USERPASS ? await bcrypt.compare(password, row.USERPASS) : false;
 
   if (!row || !valid) {
-    await execute(
-      `INSERT INTO UMS.UMS_LOGINFAILURETEMP (ID, USERID, IPADDRESS, LOGINDATETIME)
-       VALUES ((SELECT NVL(MAX(ID),0)+1 FROM UMS.UMS_LOGINFAILURETEMP), :u, :ip, SYSDATE)`,
-      { u: userId, ip: ip.slice(0, 39) },
-    );
+    if (row) await recordFailure(row.USERID, ip);
     return { ok: false, error: "Invalid user ID or password." };
   }
   if (row.STATUS !== ACTIVE) return { ok: false, error: "This account is not active." };
@@ -52,7 +74,7 @@ export async function verifyLogin(userId: string, password: string, ip: string):
   );
   return {
     ok: true,
-    passwordExpired: row.EXPIREDATE < new Date(),
+    passwordExpired: row.EXPIREDATE ? row.EXPIREDATE < new Date() : true,
     user: { userId: row.USERID, name: row.NAME, roles: roles.map((r) => Number(r.ROLEID)) },
   };
 }
