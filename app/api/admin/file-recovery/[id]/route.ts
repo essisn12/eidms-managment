@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { errorResponse, guardAdmin, json } from "@/lib/api";
-import { getTransfers, previewRecovery, runRecovery } from "@/lib/file-recovery";
+import { compareAccess, getTransfers, previewRecovery, runRecovery, whoCanSee } from "@/lib/file-recovery";
 
 type Ctx = RouteContext<"/api/admin/file-recovery/[id]">;
 const ID = /^\d{1,15}$/;
@@ -11,10 +11,15 @@ export async function GET(req: Request, ctx: Ctx) {
   if (!g.ok) return g.res;
   const { id } = await ctx.params;
   if (!ID.test(id)) return json({ error: "Invalid id" }, 400);
-  const recipe = new URL(req.url).searchParams.get("recipe");
+  const params = new URL(req.url).searchParams;
+  const recipe = params.get("recipe");
+  const users = (params.get("users") ?? "").split(",").map((u) => u.trim()).filter(Boolean);
+  if (users.length > 5 || users.some((u) => !/^[A-Za-z0-9_.@-]{1,50}$/.test(u))) return json({ error: "Invalid user list" }, 400);
   try {
+    if (users.length) return json(await compareAccess(Number(id), users));
     return json({
       ...(await getTransfers(Number(id))),
+      access: await whoCanSee(Number(id)),
       preview: recipe ? await previewRecovery(recipe, Number(id)) : null,
     });
   } catch (e) {

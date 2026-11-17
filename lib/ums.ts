@@ -84,10 +84,10 @@ export type UserInput = {
 /** NSIDB.NSIDB_USER_PERMISION: the user's level, organisation placement and display names (same DB, other schema). */
 export type Permission = {
   levelId: number;
-  branchId: number;
-  wingId: number;
-  sectionId: number;
-  designationId: number;
+  branchId: number | null;
+  wingId: number | null;
+  sectionId: number | null;
+  designationId: number | null;
   nameBangla: string;
   nameEnglish: string;
 };
@@ -100,12 +100,13 @@ export async function getPermission(userId: string): Promise<Permission | null> 
     { u: userId },
   );
   if (!r) return null;
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
     levelId: Number(r.USER_LEVEL_ID),
-    branchId: Number(r.BRANCH_ID),
-    wingId: Number(r.WING_ID),
-    sectionId: Number(r.SECTION_ID),
-    designationId: Number(r.DESIGNATION_ID),
+    branchId: n(r.BRANCH_ID),
+    wingId: n(r.WING_ID),
+    sectionId: n(r.SECTION_ID),
+    designationId: n(r.DESIGNATION_ID),
     nameBangla: String(r.USER_NAME_BANGLA ?? ""),
     nameEnglish: String(r.USER_NAME_ENGLISH ?? ""),
   };
@@ -260,18 +261,44 @@ export async function createUser(
   if (bad) throw new ClientError(bad);
   if (isDefault) forceChange = true;
   return transaction(async (c) => {
-    const dup = await c.execute(`SELECT 1 FROM UMS.UMS_USERINFO WHERE UPPER(USERID) = UPPER(:u)`, { u: d.USERID });
-    if (dup.rows?.length) throw new ClientError("User ID already exists", 409);
+    const dup = await c.execute<{ USERID: string; RECSTATUS: string }>(
+      `SELECT USERID, RECSTATUS FROM UMS.UMS_USERINFO WHERE UPPER(USERID) = UPPER(:u)`,
+      { u: d.USERID },
+    );
+    const old = dup.rows?.[0];
+    if (old && old.RECSTATUS !== "D") throw new ClientError("User ID already exists", 409);
+    // A deleted (soft-deleted) ID is reused: its row is overwritten with the new details. Other tables key on the
+    // stored spelling of the ID, so that spelling is kept.
+    if (old) d = { ...d, USERID: old.USERID };
     try {
-      await c.execute(
-        `INSERT INTO UMS.UMS_USERINFO
-           (USERID, NAME, CATEGORYID, CELLNO, EMAIL, DOB, CATIDVAL, MFA, MACADDRESS, IPADDRESS, RECSTATUS, PICTURE, SIGNATURE)
-         VALUES (:USERID, :NAME, :CATEGORYID, :CELLNO, :EMAIL, :DOB, :CATIDVAL, :MFA, :MACADDRESS, :IPADDRESS, :RECSTATUS,
-                 EMPTY_BLOB(), EMPTY_BLOB())`,
-        userBinds(d),
-      );
+      if (old) {
+        await c.execute(
+          `UPDATE UMS.UMS_USERINFO
+              SET NAME = :NAME, CATEGORYID = :CATEGORYID, CELLNO = :CELLNO, EMAIL = :EMAIL, DOB = :DOB,
+                  CATIDVAL = :CATIDVAL, MFA = :MFA, MACADDRESS = :MACADDRESS, IPADDRESS = :IPADDRESS,
+                  RECSTATUS = :RECSTATUS, PICTURE = EMPTY_BLOB(), SIGNATURE = EMPTY_BLOB()
+            WHERE USERID = :USERID`,
+          userBinds(d),
+        );
+      } else {
+        await c.execute(
+          `INSERT INTO UMS.UMS_USERINFO
+             (USERID, NAME, CATEGORYID, CELLNO, EMAIL, DOB, CATIDVAL, MFA, MACADDRESS, IPADDRESS, RECSTATUS, PICTURE, SIGNATURE)
+           VALUES (:USERID, :NAME, :CATEGORYID, :CELLNO, :EMAIL, :DOB, :CATIDVAL, :MFA, :MACADDRESS, :IPADDRESS, :RECSTATUS,
+                   EMPTY_BLOB(), EMPTY_BLOB())`,
+          userBinds(d),
+        );
+      }
     } catch (e) {
       throw await explainUniqueViolation(c, e, "UMS", "UMS_USERINFO", userBinds(d));
+    }
+    if (old) {
+      // Start clean: the previous holder's office placement and failed-login lockout must not carry over.
+      await c.execute(
+        `UPDATE NSIDB.NSIDB_USER_PERMISION SET RECSTATUS = 'D' WHERE UPPER(USER_NAME) = UPPER(:u) AND RECSTATUS = 'A'`,
+        { u: d.USERID },
+      );
+      await c.execute(`DELETE FROM UMS.UMS_LOGINFAILURETEMP WHERE UPPER(USERID) = UPPER(:u)`, { u: d.USERID });
     }
     await insertPassword(c, d.USERID, password, forceChange ? -1 : policy.expireDays);
     await syncRoles(c, d.USERID, roles);

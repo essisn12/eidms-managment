@@ -23,12 +23,15 @@ export const userFields = z.object({
 
 const id = z.coerce.number().int().positive();
 
+/** Placement ids may be empty in NSIDB (e.g. a user with no designation); copied as-is so file matching stays identical. */
+const optId = z.number().int().min(0).nullable();
+
 export const permissionFields = z.object({
   levelId: id,
-  branchId: id,
-  wingId: id,
-  sectionId: id,
-  designationId: id,
+  branchId: optId,
+  wingId: optId,
+  sectionId: optId,
+  designationId: optId,
   nameBangla: req(255),
   nameEnglish: req(255),
 });

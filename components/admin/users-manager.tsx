@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Pencil, Plus, Trash2, Unlock } from "lucide-react";
+import { CopyPlus, KeyRound, Pencil, Plus, Trash2, Unlock } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -23,13 +23,21 @@ type Lookups = {
 };
 type Perm = {
   levelId: number;
-  branchId: number;
-  wingId: number;
-  sectionId: number;
-  designationId: number;
+  branchId: number | null;
+  wingId: number | null;
+  sectionId: number | null;
+  designationId: number | null;
   nameBangla: string;
   nameEnglish: string;
 };
+/** Unselected dropdowns (0) are sent as null so NSIDB stores an empty value, not 0. */
+const cleanPerm = (p: Perm): Perm => ({
+  ...p,
+  branchId: p.branchId || null,
+  wingId: p.wingId || null,
+  sectionId: p.sectionId || null,
+  designationId: p.designationId || null,
+});
 const EMPTY_PERM: Perm = { levelId: 0, branchId: 0, wingId: 0, sectionId: 0, designationId: 0, nameBangla: "", nameEnglish: "" };
 type UserRow = {
   USERID: string;
@@ -95,6 +103,7 @@ export function UsersManager() {
   const [result, setResult] = useState<{ key: string; rows: UserRow[]; total: number; maxFailures: number } | null>(null);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [resetting, setResetting] = useState<UserRow | null>(null);
+  const [cloning, setCloning] = useState<string | null>(null);
 
   const key = `${page}|${query}|${reload}`;
   const loading = result?.key !== key;
@@ -207,6 +216,8 @@ export function UsersManager() {
                     )}
                     <Button size="icon-sm" variant="ghost" aria-label="Reset password" title="Reset password"
                       onClick={() => setResetting(r)}><KeyRound /></Button>
+                    <Button size="icon-sm" variant="ghost" aria-label="Create similar user" title="Create similar user"
+                      disabled={!lookups} onClick={() => setCloning(r.USERID)}><CopyPlus /></Button>
                     <Button size="icon-sm" variant="ghost" aria-label="Edit" onClick={() => setEditing(r.USERID)}><Pencil /></Button>
                     <Button size="icon-sm" variant="ghost" aria-label="Delete" onClick={() => remove(r)}><Trash2 /></Button>
                   </TableCell>
@@ -240,6 +251,17 @@ export function UsersManager() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            refresh();
+          }}
+        />
+      )}
+      {lookups && cloning && (
+        <CloneUserDialog
+          sourceId={cloning}
+          lookups={lookups}
+          onClose={() => setCloning(null)}
+          onSaved={() => {
+            setCloning(null);
             refresh();
           }}
         />
@@ -312,7 +334,7 @@ function UserDialog({
           ...fields,
           USERID: v("USERID"),
           password: v("password"),
-          permission: perm.levelId ? perm : null,
+          permission: perm.levelId ? cleanPerm(perm) : null,
           forceChange: f.get("forceChange") === "on",
         }));
       toast.success(userId ? "User updated" : "User created");
@@ -446,7 +468,7 @@ function UserDialog({
 
 function PermSelect({
   label, value, options, onChange,
-}: { label: string; value: number; options: Option[]; onChange: (v: number) => void }) {
+}: { label: string; value: number | null; options: Option[]; onChange: (v: number) => void }) {
   return (
     <Field label={label}>
       <select value={value || ""} onChange={(e) => onChange(Number(e.target.value))} className={selectClass}>
@@ -521,6 +543,132 @@ function CopyRoles({ onCopy }: { onCopy: (roles: number[], perm: Perm | null) =>
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Creates a new user that matches an existing one. The admin types only the personal details. Category, MFA,
+ * status, roles and the NSIDB placement (level, branch, wing, section, designation) are copied from the source
+ * user, so both users get the same features and the same file lists. MAC and IP restrictions are not copied
+ * because they belong to the source user's device.
+ */
+function CloneUserDialog({
+  sourceId, lookups, onClose, onSaved,
+}: { sourceId: string; lookups: Lookups; onClose: () => void; onSaved: () => void }) {
+  const [src, setSrc] = useState<UserDetail | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api<UserDetail>(`/api/admin/users/${encodeURIComponent(sourceId)}`)
+      .then(setSrc)
+      .catch((e: Error) => toast.error(e.message));
+  }, [sourceId]);
+
+  const label = (opts: Option[], id: number | null | undefined) =>
+    opts.find((o) => o.value === Number(id))?.label ?? (id ? String(id) : "—");
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!src) return;
+    const f = new FormData(e.currentTarget);
+    const v = (n: string) => String(f.get(n) ?? "").trim();
+    const p = src.permission;
+    setSaving(true);
+    try {
+      await api("/api/admin/users", send("POST", {
+        USERID: v("USERID"),
+        NAME: v("NAME"),
+        EMAIL: v("EMAIL"),
+        CELLNO: v("CELLNO"),
+        DOB: v("DOB"),
+        CATIDVAL: v("CATIDVAL"),
+        password: v("password"),
+        forceChange: f.get("forceChange") === "on",
+        CATEGORYID: src.CATEGORYID,
+        MFA: src.MFA,
+        RECSTATUS: src.RECSTATUS,
+        MACADDRESS: null,
+        IPADDRESS: null,
+        roles: src.roles,
+        permission: p
+          ? { ...p, nameEnglish: v("NAME"), nameBangla: v("nameBangla") || v("NAME") }
+          : null,
+      }));
+      toast.success(`User ${v("USERID")} created like ${src.USERID}`);
+      onSaved();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const p = src?.permission;
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Create user like {sourceId}</DialogTitle>
+        </DialogHeader>
+        {!src ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
+            <Field label="User ID *"><Input name="USERID" required maxLength={50} autoComplete="off" /></Field>
+            <Field label="Initial password *">
+              <div className="flex gap-2">
+                <Input name="password" type="password" required autoComplete="new-password" />
+                <DefaultPasswordButton />
+              </div>
+            </Field>
+            <Field label="Name *"><Input name="NAME" required maxLength={255} /></Field>
+            {p && <Field label="Name (Bangla)"><Input name="nameBangla" maxLength={255} placeholder="Defaults to Name" /></Field>}
+            <Field label="Email *"><Input name="EMAIL" type="email" required maxLength={255} /></Field>
+            <Field label="Cell no *"><Input name="CELLNO" required maxLength={255} /></Field>
+            <Field label="Date of birth *"><Input name="DOB" required maxLength={255} placeholder="YYYY-MM-DD" /></Field>
+            <Field label={`Category ID value * (${label(lookups.categories, src.CATEGORYID)}, copied)`}>
+              <Input name="CATIDVAL" required maxLength={50} defaultValue={src.CATIDVAL ?? ""} />
+            </Field>
+
+            <div className="grid gap-1 rounded-lg border bg-muted/40 p-3 text-sm sm:col-span-2">
+              <p className="font-medium">Copied from {src.USERID}{src.NAME ? ` (${src.NAME})` : ""}</p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                <dt className="text-muted-foreground">Category</dt><dd>{label(lookups.categories, src.CATEGORYID)}</dd>
+                <dt className="text-muted-foreground">MFA / Status</dt>
+                <dd>{src.MFA === "Y" ? "MFA on" : "MFA off"} · {src.RECSTATUS === "A" ? "Active" : "Inactive"}</dd>
+                <dt className="text-muted-foreground">Roles</dt>
+                <dd>{src.roles.length ? src.roles.map((r) => label(lookups.roles, r)).join(", ") : "None"}</dd>
+                {p ? (
+                  <>
+                    <dt className="text-muted-foreground">Level</dt><dd>{label(lookups.levels, p.levelId)}</dd>
+                    <dt className="text-muted-foreground">Designation</dt><dd>{label(lookups.designations, p.designationId)}</dd>
+                    <dt className="text-muted-foreground">Branch / Wing / Section</dt>
+                    <dd>
+                      {label(lookups.branches, p.branchId)} / {label(lookups.wings, p.wingId)} / {label(lookups.sections, p.sectionId)}
+                    </dd>
+                  </>
+                ) : (
+                  <>
+                    <dt className="text-muted-foreground">Placement</dt>
+                    <dd className="text-destructive">
+                      {src.USERID} has no NSIDB placement, so the new user will not see any files either.
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" name="forceChange" defaultChecked /> Require password change at first login
+            </label>
+            <DialogFooter className="sm:col-span-2">
+              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? "Creating…" : "Create user"}</Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
